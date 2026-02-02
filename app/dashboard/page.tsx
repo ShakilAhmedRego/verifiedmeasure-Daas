@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { exportToCSV, formatDateTimeStamp } from '@/lib/csv'
+import { exportToCSV } from '@/lib/csv'
 import { Shield, Download, Search, LogOut, Settings } from 'lucide-react'
+
+const formatDateTimeStamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
 
 export default function Dashboard() {
   const router = useRouter()
