@@ -12,7 +12,13 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "plugins": [{"name": "next"}],
+    "downlevelIteration": true,
+    "target": "es2017",
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "paths": {
       "@/*": ["./*"]
     }
