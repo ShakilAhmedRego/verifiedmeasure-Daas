@@ -58,7 +58,7 @@ export default function DashboardPage() {
   const checkUser = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      
+
       if (!session) {
         router.push('/login')
         return
@@ -93,7 +93,7 @@ export default function DashboardPage() {
       .select('*')
       .eq('status', 'available')
       .order('created_date', { ascending: false })
-    
+
     setLeads((data as Lead[]) || [])
   }
 
@@ -103,7 +103,7 @@ export default function DashboardPage() {
       .select('*')
       .eq('user_id', userId)
       .order('downloaded_at', { ascending: false })
-    
+
     setDownloadHistory((data as DownloadRecord[]) || [])
   }
 
@@ -116,17 +116,17 @@ export default function DashboardPage() {
   const locations = ['all', ...new Set(leads.map(l => l.location).filter(Boolean))]
 
   const filteredLeads = leads.filter(lead => {
-    const matchesSearch = 
+    const matchesSearch =
       lead.company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       lead.contact_name?.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesIndustry = filterIndustry === 'all' || lead.industry === filterIndustry
     const matchesLocation = filterLocation === 'all' || lead.location === filterLocation
-    
+
     return matchesSearch && matchesIndustry && matchesLocation
   })
 
   const handleSelectLead = (leadId: string) => {
-    setSelectedLeads(prev => 
+    setSelectedLeads(prev =>
       prev.includes(leadId) ? prev.filter(id => id !== leadId) : [...prev, leadId]
     )
   }
@@ -156,7 +156,7 @@ export default function DashboardPage() {
 
     try {
       const leadsToDownload = leads.filter(l => selectedLeads.includes(l.id))
-      
+
       exportToCSV(
         leadsToDownload.map(lead => ({
           'Company Name': lead.company_name,
@@ -192,7 +192,7 @@ export default function DashboardPage() {
 
       await checkUser()
       setSelectedLeads([])
-      
+
       showNotification(
         alreadyDownloaded.length > 0
           ? `Downloaded ${selectedLeads.length} leads! (${alreadyDownloaded.length} were free re-downloads)`
@@ -317,3 +317,127 @@ export default function DashboardPage() {
 
         <div className="bg-white rounded-3xl shadow-sm p-6 border">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Search className="w-4 h-4 inline mr-1" />Search
+              </label>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Company or contact..."
+                className="w-full px-4 py-2.5 border rounded-2xl focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Filter className="w-4 h-4 inline mr-1" />Industry
+              </label>
+              <select value={filterIndustry} onChange={(e) => setFilterIndustry(e.target.value)} className="w-full px-4 py-2.5 border rounded-2xl focus:ring-2 focus:ring-blue-500">
+                {industries.map(ind => <option key={ind} value={ind}>{ind === 'all' ? 'All Industries' : ind}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Filter className="w-4 h-4 inline mr-1" />Location
+              </label>
+              <select value={filterLocation} onChange={(e) => setFilterLocation(e.target.value)} className="w-full px-4 py-2.5 border rounded-2xl focus:ring-2 focus:ring-blue-500">
+                {locations.map(loc => <option key={loc} value={loc}>{loc === 'all' ? 'All Locations' : loc}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl shadow-sm p-4 border flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <button onClick={handleSelectAll} className="px-4 py-2 bg-gray-100 rounded-2xl hover:bg-gray-200 font-medium">
+              {selectedLeads.length === filteredLeads.length ? 'Deselect All' : 'Select All'}
+            </button>
+            <span className="text-gray-600">{selectedLeads.length} selected</span>
+          </div>
+          <button onClick={handleDownload} disabled={selectedLeads.length === 0} className={`px-6 py-2.5 rounded-2xl font-semibold flex items-center gap-2 ${selectedLeads.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg' : 'bg-gray-300 text-gray-500'}`}>
+            <Download className="w-5 h-5" />
+            Download ({selectedLeads.filter(id => !downloadHistory.some((h: DownloadRecord) => h.lead_id === id)).length} credits)
+          </button>
+        </div>
+
+        <div className="bg-white rounded-3xl shadow-sm overflow-hidden border">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  {['Select', 'Company', 'Contact', 'Industry', 'Location', 'Capital Need'].map(h => (
+                    <th key={h} className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {filteredLeads.length === 0 ? (
+                  <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">No leads found</td></tr>
+                ) : (
+                  filteredLeads.map(lead => {
+                    const downloaded = downloadHistory.some((h: DownloadRecord) => h.lead_id === lead.id)
+                    return (
+                      <tr key={lead.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4">
+                          <input type="checkbox" checked={selectedLeads.includes(lead.id)} onChange={() => handleSelectLead(lead.id)} className="w-4 h-4 text-blue-600 rounded" />
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="font-semibold">{lead.company_name}</div>
+                          <div className="text-sm text-gray-600">{lead.email}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div>{lead.contact_name}</div>
+                          <div className="text-sm text-gray-600">{lead.phone}</div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-3 py-1 rounded-xl text-xs font-semibold bg-blue-100 text-blue-800">{lead.industry}</span>
+                        </td>
+                        <td className="px-6 py-4">{lead.location}</td>
+                        <td className="px-6 py-4">
+                          <div className="font-semibold text-green-600">{lead.capital_need}</div>
+                          {downloaded && <span className="text-xs text-green-600">✓ FREE Re-download</span>}
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {downloadHistory.length > 0 && (
+          <div className="bg-white rounded-3xl shadow-sm p-6 border">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <History className="w-5 h-5" />Download History
+            </h2>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {downloadHistory.map((record: DownloadRecord, idx) => {
+                const lead = leads.find(l => l.id === record.lead_id)
+                return (
+                  <div key={idx} className="flex justify-between p-4 bg-gray-50 rounded-2xl">
+                    <div>
+                      <p className="font-semibold">{lead?.company_name || 'Unknown'}</p>
+                      <p className="text-sm text-gray-600">{lead?.contact_name || ''} - {lead?.industry || ''}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs text-gray-500">{new Date(record.downloaded_at).toLocaleDateString()}</span>
+                      <span className="text-xs text-green-600 block">✓ Downloaded</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white border-t mt-12">
+        <div className="max-w-7xl mx-auto px-4 py-6 text-center text-sm text-gray-600">
+          <p>© 2026 VerifiedMeasure | Contact: <a href="mailto:QA@verifiedmeasure.com" className="text-blue-600">QA@verifiedmeasure.com</a></p>
+        </div>
+      </div>
+    </div>
+  )
+}
