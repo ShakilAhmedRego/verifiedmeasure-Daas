@@ -1,10 +1,12 @@
 'use client'
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { getSupabase } from '@/lib/supabase'
 import { isWorkEmail, getEmailError } from '@/lib/emailValidator'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Shield, Mail, Lock, User, Building2, AlertCircle, CheckCircle2 } from 'lucide-react'
+
+const supabase = getSupabase()
 
 export default function SignupPage() {
   const router = useRouter()
@@ -24,7 +26,6 @@ export default function SignupPage() {
     setError('')
     setLoading(true)
 
-    // Validate work email
     const emailError = getEmailError(formData.email)
     if (emailError) {
       setError(emailError)
@@ -32,14 +33,12 @@ export default function SignupPage() {
       return
     }
 
-    // Validate passwords match
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match')
       setLoading(false)
       return
     }
 
-    // Validate password strength
     if (formData.password.length < 8) {
       setError('Password must be at least 8 characters')
       setLoading(false)
@@ -111,7 +110,6 @@ export default function SignupPage() {
       <div className="absolute inset-0 bg-grid-white/[0.05] bg-[size:20px_20px]" />
       
       <div className="relative w-full max-w-md">
-        {/* Logo/Branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-white/10 backdrop-blur-sm border border-white/20 mb-4">
             <Shield className="w-8 h-8 text-white" />
@@ -120,7 +118,6 @@ export default function SignupPage() {
           <p className="text-blue-100">Create Your Account</p>
         </div>
 
-        {/* Signup Card */}
         <div className="glass-card rounded-3xl shadow-2xl p-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Sign Up</h2>
 
@@ -247,7 +244,6 @@ export default function SignupPage() {
           </div>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-blue-100 text-sm mt-8">
           © 2026 VerifiedMeasure. All rights reserved.
         </p>
