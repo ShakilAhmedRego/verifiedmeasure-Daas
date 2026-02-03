@@ -1,9 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { getSupabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Shield, Mail, Lock, AlertCircle } from 'lucide-react'
+
+const supabase = getSupabase()
 
 export default function LoginPage() {
   const router = useRouter()
@@ -67,7 +69,6 @@ export default function LoginPage() {
       <div className="absolute inset-0 bg-grid-white/[0.05] bg-[size:20px_20px]" />
       
       <div className="relative w-full max-w-md">
-        {/* Logo/Branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-white/10 backdrop-blur-sm border border-white/20 mb-4">
             <Shield className="w-8 h-8 text-white" />
@@ -76,7 +77,6 @@ export default function LoginPage() {
           <p className="text-blue-100">Verified Capital Raise Leads</p>
         </div>
 
-        {/* Login Card */}
         <div className="glass-card rounded-3xl shadow-2xl p-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Sign In</h2>
 
@@ -151,7 +151,6 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-blue-100 text-sm mt-8">
           © 2026 VerifiedMeasure. All rights reserved.
         </p>
