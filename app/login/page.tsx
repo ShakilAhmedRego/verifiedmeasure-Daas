@@ -7,6 +7,11 @@ import { Shield, Mail, Lock, AlertCircle } from 'lucide-react'
 
 const supabase = getSupabase()
 
+interface UserProfile {
+  role: string
+  status: string
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
@@ -25,7 +30,7 @@ export default function LoginPage() {
         .from('user_profiles')
         .select('role')
         .eq('id', session.user.id)
-        .single()
+        .single() as { data: UserProfile | null }
       
       if (profile) {
         router.push(profile.role === 'admin' ? '/admin' : '/dashboard')
@@ -50,7 +55,7 @@ export default function LoginPage() {
         .from('user_profiles')
         .select('role, status')
         .eq('id', data.user.id)
-        .single()
+        .single() as { data: UserProfile | null }
 
       if (profile && profile.status === 'suspended') {
         await supabase.auth.signOut()
