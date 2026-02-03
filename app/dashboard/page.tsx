@@ -1,9 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getSupabase } from '@/lib/supabase'
-import { exportToCSV } from '@/lib/csv'
 import { useRouter } from 'next/navigation'
-import { Shield, Download, Search, Filter, LogOut, Coins, Database, CheckCircle, History, X } from 'lucide-react'
+import { Shield, Upload, Users, Database, LogOut, Coins } from 'lucide-react'
 
 const supabase = getSupabase()
 
@@ -19,6 +18,7 @@ interface Lead {
   company_size: string
   revenue_range: string
   capital_need: string
+  status: string
 }
 
 interface UserProfile {
@@ -31,31 +31,19 @@ interface UserProfile {
   status: string
 }
 
-interface DownloadRecord {
-  id: string
-  user_id: string
-  lead_id: string
-  downloaded_at: string
-}
-
-export default function DashboardPage() {
+export default function AdminPage() {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [leads, setLeads] = useState<Lead[]>([])
-  const [selectedLeads, setSelectedLeads] = useState<string[]>([])
-  const [downloadHistory, setDownloadHistory] = useState<DownloadRecord[]>([])
-  const [searchTerm, setSearchTerm] = useState('')
-  const [filterIndustry, setFilterIndustry] = useState('all')
-  const [filterLocation, setFilterLocation] = useState('all')
+  const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [notification, setNotification] = useState<{message: string, type: string} | null>(null)
 
   useEffect(() => {
-    checkUser()
+    checkAdmin()
   }, [])
 
-  const checkUser = async () => {
+  const checkAdmin = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
 
@@ -64,21 +52,18 @@ export default function DashboardPage() {
         return
       }
 
-      const { data: profileData } = await supabase
+      const { data: profile } = await supabase
         .from('user_profiles')
-        .select('*')
+        .select('role')
         .eq('id', session.user.id)
-        .single() as { data: UserProfile | null }
+        .single() as { data: { role: string } | null }
 
-      if (profileData && profileData.role === 'admin') {
-        router.push('/admin')
+      if (!profile || profile.role !== 'admin') {
+        router.push('/dashboard')
         return
       }
 
-      setUser(session.user)
-      setProfile(profileData)
-      await fetchLeads()
-      await fetchDownloadHistory(session.user.id)
+      await fetchData()
     } catch (error) {
       console.error('Error:', error)
       router.push('/login')
@@ -87,24 +72,14 @@ export default function DashboardPage() {
     }
   }
 
-  const fetchLeads = async () => {
-    const { data } = await supabase
-      .from('leads')
-      .select('*')
-      .eq('status', 'available')
-      .order('created_date', { ascending: false })
+  const fetchData = async () => {
+    const [leadsData, usersData] = await Promise.all([
+      supabase.from('leads').select('*').order('created_date', { ascending: false }),
+      supabase.from('user_profiles').select('*').order('created_at', { ascending: false })
+    ])
 
-    setLeads((data as Lead[]) || [])
-  }
-
-  const fetchDownloadHistory = async (userId: string) => {
-    const { data } = await supabase
-      .from('download_history')
-      .select('*')
-      .eq('user_id', userId)
-      .order('downloaded_at', { ascending: false })
-
-    setDownloadHistory((data as DownloadRecord[]) || [])
+    setLeads((leadsData.data as Lead[]) || [])
+    setUsers((usersData.data as UserProfile[]) || [])
   }
 
   const showNotification = (message: string, type: string) => {
@@ -112,96 +87,72 @@ export default function DashboardPage() {
     setTimeout(() => setNotification(null), 4000)
   }
 
-  const industries = ['all', ...new Set(leads.map(l => l.industry).filter(Boolean))]
-  const locations = ['all', ...new Set(leads.map(l => l.location).filter(Boolean))]
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
 
-  const filteredLeads = leads.filter(lead => {
-    const matchesSearch =
-      lead.company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.contact_name?.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesIndustry = filterIndustry === 'all' || lead.industry === filterIndustry
-    const matchesLocation = filterLocation === 'all' || lead.location === filterLocation
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string
+        const lines = text.split('\n')
+        const headers = lines[0].split(',').map((h: string) => h.trim().toLowerCase().replace(/"/g, ''))
 
-    return matchesSearch && matchesIndustry && matchesLocation
-  })
+        const newLeads: Record<string, string>[] = []
+        for (let i = 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue
 
-  const handleSelectLead = (leadId: string) => {
-    setSelectedLeads(prev =>
-      prev.includes(leadId) ? prev.filter(id => id !== leadId) : [...prev, leadId]
-    )
-  }
-
-  const handleSelectAll = () => {
-    setSelectedLeads(
-      selectedLeads.length === filteredLeads.length ? [] : filteredLeads.map(l => l.id)
-    )
-  }
-
-  const handleDownload = async () => {
-    if (selectedLeads.length === 0) {
-      showNotification('Please select at least one lead', 'warning')
-      return
-    }
-
-    const alreadyDownloaded = selectedLeads.filter(leadId =>
-      downloadHistory.some((h: DownloadRecord) => h.lead_id === leadId)
-    )
-    const newDownloads = selectedLeads.filter(leadId => !alreadyDownloaded.includes(leadId))
-    const creditsNeeded = newDownloads.length
-
-    if (creditsNeeded > 0 && (profile?.credits || 0) < creditsNeeded) {
-      showNotification(`Insufficient credits. You need ${creditsNeeded} but have ${profile?.credits || 0}`, 'error')
-      return
-    }
-
-    try {
-      const leadsToDownload = leads.filter(l => selectedLeads.includes(l.id))
-
-      exportToCSV(
-        leadsToDownload.map(lead => ({
-          'Company Name': lead.company_name,
-          'Contact Name': lead.contact_name,
-          'Email': lead.email,
-          'Phone': lead.phone,
-          'Industry': lead.industry,
-          'Location': lead.location,
-          'Company Size': lead.company_size,
-          'Revenue Range': lead.revenue_range,
-          'Capital Need': lead.capital_need
-        })),
-        `verifiedmeasure_leads_${new Date().toISOString().split('T')[0]}.csv`
-      )
-
-      if (newDownloads.length > 0) {
-        await supabase
-          .from('user_profiles')
-          .update({ credits: (profile?.credits || 0) - creditsNeeded })
-          .eq('id', user.id)
-
-        for (const leadId of newDownloads) {
-          await supabase.from('download_history').insert({ user_id: user.id, lead_id: leadId })
+          const values = lines[i].split(',').map((v: string) => v.trim().replace(/"/g, ''))
+          const lead: Record<string, string> = {
+            lead_id: `LEAD-${Date.now()}-${i}`,
+            company_name: values[headers.indexOf('company_name')] || values[headers.indexOf('company')] || '',
+            contact_name: values[headers.indexOf('contact_name')] || values[headers.indexOf('contact')] || '',
+            email: values[headers.indexOf('email')] || '',
+            phone: values[headers.indexOf('phone')] || '',
+            industry: values[headers.indexOf('industry')] || '',
+            location: values[headers.indexOf('location')] || '',
+            company_size: values[headers.indexOf('company_size')] || values[headers.indexOf('company size')] || '',
+            revenue_range: values[headers.indexOf('revenue_range')] || values[headers.indexOf('revenue')] || '',
+            capital_need: values[headers.indexOf('capital_need')] || values[headers.indexOf('capital need')] || ''
+          }
+          newLeads.push(lead)
         }
 
-        await supabase.from('credit_transactions').insert({
-          user_id: user.id,
-          amount: -creditsNeeded,
-          type: 'deduct',
-          description: `Downloaded ${creditsNeeded} leads`
-        })
+        const { error } = await (supabase.from('leads') as any).insert(newLeads)
+        if (error) throw error
+
+        await fetchData()
+        showNotification(`Successfully imported ${newLeads.length} leads!`, 'success')
+      } catch (error) {
+        console.error('CSV upload error:', error)
+        showNotification('Error importing CSV. Please check format.', 'error')
       }
+    }
+    reader.readAsText(file)
+    if (e.target) e.target.value = ''
+  }
 
-      await checkUser()
-      setSelectedLeads([])
+  const grantCredits = async (userId: string, currentCredits: number) => {
+    const creditsInput = prompt('Enter credits to grant:')
+    if (!creditsInput || isNaN(Number(creditsInput))) return
 
-      showNotification(
-        alreadyDownloaded.length > 0
-          ? `Downloaded ${selectedLeads.length} leads! (${alreadyDownloaded.length} were free re-downloads)`
-          : `Downloaded ${selectedLeads.length} leads successfully!`,
-        'success'
-      )
-    } catch (error) {
-      console.error('Download error:', error)
-      showNotification('Download failed. Please try again.', 'error')
+    const amount = parseInt(creditsInput)
+    const newCredits = currentCredits + amount
+
+    const { error } = await (supabase.from('user_profiles') as any)
+      .update({ credits: newCredits })
+      .eq('id', userId)
+
+    if (!error) {
+      await (supabase.from('credit_transactions') as any).insert({
+        user_id: userId,
+        amount: amount,
+        type: 'grant',
+        description: `Admin granted ${amount} credits`
+      })
+
+      await fetchData()
+      showNotification(`Granted ${amount} credits successfully!`, 'success')
     }
   }
 
@@ -214,8 +165,8 @@ export default function DashboardPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading admin panel...</p>
         </div>
       </div>
     )
@@ -225,55 +176,44 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50">
       {notification && (
         <div className="fixed top-4 right-4 z-50 animate-slide-in">
-          <div className={`px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 ${
-            notification.type === 'success' ? 'bg-green-500' :
-            notification.type === 'error' ? 'bg-red-500' : 'bg-yellow-500'
-          } text-white font-medium`}>
-            {notification.type === 'success' && <CheckCircle className="w-5 h-5" />}
+          <div className={`px-6 py-4 rounded-2xl shadow-2xl text-white font-medium ${
+            notification.type === 'success' ? 'bg-green-500' : 'bg-red-500'
+          }`}>
             {notification.message}
-            <button onClick={() => setNotification(null)}><X className="w-4 h-4" /></button>
           </div>
         </div>
       )}
 
-      <div className="bg-white border-b shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+      <div className="vm-gradient text-white shadow-lg">
+        <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-blue-100 flex items-center justify-center">
-                <Shield className="w-6 h-6 text-blue-600" />
+              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+                <Shield className="w-7 h-7" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold">VerifiedMeasure</h1>
-                <p className="text-sm text-gray-600">Welcome, {profile?.name}</p>
+                <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+                <p className="text-blue-100">VerifiedMeasure Platform Management</p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-sm text-gray-600">Available Credits</p>
-                <div className="flex items-center gap-2">
-                  <Coins className="w-5 h-5 text-yellow-500" />
-                  <p className="text-3xl font-bold text-blue-600">{profile?.credits || 0}</p>
-                </div>
-              </div>
-              <button onClick={handleLogout} className="px-4 py-2 text-gray-600 hover:text-gray-900 flex items-center gap-2">
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
+            <button onClick={handleLogout} className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-2xl flex items-center gap-2">
+              <LogOut className="w-5 h-5" />
+              Logout
+            </button>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white rounded-3xl shadow-sm p-6 border">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-600 text-sm font-medium">Available Leads</p>
-                <p className="text-3xl font-bold mt-1 text-blue-600">{filteredLeads.length}</p>
+                <p className="text-gray-600 text-sm font-medium">Total Leads</p>
+                <p className="text-4xl font-bold text-gray-900 mt-1">{leads.length}</p>
               </div>
-              <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center">
-                <Database className="w-6 h-6 text-blue-600" />
+              <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center">
+                <Database className="w-8 h-8 text-purple-600" />
               </div>
             </div>
           </div>
@@ -281,23 +221,13 @@ export default function DashboardPage() {
           <div className="bg-white rounded-3xl shadow-sm p-6 border">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-600 text-sm font-medium">Selected</p>
-                <p className="text-3xl font-bold mt-1 text-green-600">{selectedLeads.length}</p>
+                <p className="text-gray-600 text-sm font-medium">Active Users</p>
+                <p className="text-4xl font-bold text-gray-900 mt-1">
+                  {users.filter(u => u.role === 'client' && u.status === 'active').length}
+                </p>
               </div>
-              <div className="w-12 h-12 bg-green-100 rounded-2xl flex items-center justify-center">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-3xl shadow-sm p-6 border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-gray-600 text-sm font-medium">Downloaded</p>
-                <p className="text-3xl font-bold mt-1 text-purple-600">{downloadHistory.length}</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center">
-                <History className="w-6 h-6 text-purple-600" />
+              <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center">
+                <Users className="w-8 h-8 text-blue-600" />
               </div>
             </div>
           </div>
@@ -305,139 +235,53 @@ export default function DashboardPage() {
           <div className="bg-white rounded-3xl shadow-sm p-6 border">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-gray-600 text-sm font-medium">Cost</p>
-                <p className="text-3xl font-bold mt-1 text-orange-600">{selectedLeads.filter(id => !downloadHistory.some((h: DownloadRecord) => h.lead_id === id)).length}</p>
+                <p className="text-gray-600 text-sm font-medium">Total Credits Issued</p>
+                <p className="text-4xl font-bold text-gray-900 mt-1">
+                  {users.reduce((sum, u) => sum + (u.credits || 0), 0)}
+                </p>
               </div>
-              <div className="w-12 h-12 bg-orange-100 rounded-2xl flex items-center justify-center">
-                <Coins className="w-6 h-6 text-orange-600" />
+              <div className="w-16 h-16 bg-yellow-100 rounded-2xl flex items-center justify-center">
+                <Coins className="w-8 h-8 text-yellow-600" />
               </div>
             </div>
           </div>
         </div>
 
         <div className="bg-white rounded-3xl shadow-sm p-6 border">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Search className="w-4 h-4 inline mr-1" />Search
-              </label>
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Company or contact..."
-                className="w-full px-4 py-2.5 border rounded-2xl focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Filter className="w-4 h-4 inline mr-1" />Industry
-              </label>
-              <select value={filterIndustry} onChange={(e) => setFilterIndustry(e.target.value)} className="w-full px-4 py-2.5 border rounded-2xl focus:ring-2 focus:ring-blue-500">
-                {industries.map(ind => <option key={ind} value={ind}>{ind === 'all' ? 'All Industries' : ind}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Filter className="w-4 h-4 inline mr-1" />Location
-              </label>
-              <select value={filterLocation} onChange={(e) => setFilterLocation(e.target.value)} className="w-full px-4 py-2.5 border rounded-2xl focus:ring-2 focus:ring-blue-500">
-                {locations.map(loc => <option key={loc} value={loc}>{loc === 'all' ? 'All Locations' : loc}</option>)}
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl shadow-sm p-4 border flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <button onClick={handleSelectAll} className="px-4 py-2 bg-gray-100 rounded-2xl hover:bg-gray-200 font-medium">
-              {selectedLeads.length === filteredLeads.length ? 'Deselect All' : 'Select All'}
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">Lead Management</h2>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleCSVUpload}
+              accept=".csv"
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-6 py-3 bg-green-600 text-white rounded-2xl hover:bg-green-700 flex items-center gap-2 font-semibold shadow-lg"
+            >
+              <Upload className="w-5 h-5" />
+              Upload CSV
             </button>
-            <span className="text-gray-600">{selectedLeads.length} selected</span>
           </div>
-          <button onClick={handleDownload} disabled={selectedLeads.length === 0} className={`px-6 py-2.5 rounded-2xl font-semibold flex items-center gap-2 ${selectedLeads.length > 0 ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg' : 'bg-gray-300 text-gray-500'}`}>
-            <Download className="w-5 h-5" />
-            Download ({selectedLeads.filter(id => !downloadHistory.some((h: DownloadRecord) => h.lead_id === id)).length} credits)
-          </button>
-        </div>
 
-        <div className="bg-white rounded-3xl shadow-sm overflow-hidden border">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  {['Select', 'Company', 'Contact', 'Industry', 'Location', 'Capital Need'].map(h => (
-                    <th key={h} className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
+                  {['Company', 'Contact', 'Industry', 'Location', 'Capital Need', 'Status'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {filteredLeads.length === 0 ? (
-                  <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">No leads found</td></tr>
-                ) : (
-                  filteredLeads.map(lead => {
-                    const downloaded = downloadHistory.some((h: DownloadRecord) => h.lead_id === lead.id)
-                    return (
-                      <tr key={lead.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <input type="checkbox" checked={selectedLeads.includes(lead.id)} onChange={() => handleSelectLead(lead.id)} className="w-4 h-4 text-blue-600 rounded" />
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-semibold">{lead.company_name}</div>
-                          <div className="text-sm text-gray-600">{lead.email}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div>{lead.contact_name}</div>
-                          <div className="text-sm text-gray-600">{lead.phone}</div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="px-3 py-1 rounded-xl text-xs font-semibold bg-blue-100 text-blue-800">{lead.industry}</span>
-                        </td>
-                        <td className="px-6 py-4">{lead.location}</td>
-                        <td className="px-6 py-4">
-                          <div className="font-semibold text-green-600">{lead.capital_need}</div>
-                          {downloaded && <span className="text-xs text-green-600">✓ FREE Re-download</span>}
-                        </td>
-                      </tr>
-                    )
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {downloadHistory.length > 0 && (
-          <div className="bg-white rounded-3xl shadow-sm p-6 border">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <History className="w-5 h-5" />Download History
-            </h2>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {downloadHistory.map((record: DownloadRecord, idx) => {
-                const lead = leads.find(l => l.id === record.lead_id)
-                return (
-                  <div key={idx} className="flex justify-between p-4 bg-gray-50 rounded-2xl">
-                    <div>
-                      <p className="font-semibold">{lead?.company_name || 'Unknown'}</p>
-                      <p className="text-sm text-gray-600">{lead?.contact_name || ''} - {lead?.industry || ''}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs text-gray-500">{new Date(record.downloaded_at).toLocaleDateString()}</span>
-                      <span className="text-xs text-green-600 block">✓ Downloaded</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white border-t mt-12">
-        <div className="max-w-7xl mx-auto px-4 py-6 text-center text-sm text-gray-600">
-          <p>© 2026 VerifiedMeasure | Contact: <a href="mailto:QA@verifiedmeasure.com" className="text-blue-600">QA@verifiedmeasure.com</a></p>
-        </div>
-      </div>
-    </div>
-  )
-}
+                {leads.slice(0, 10).map(lead => (
+                  <tr key={lead.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{lead.company_name}</div>
+                      <div className="text-xs text-gray-500">{lead.email}</div>
+                    </td>
+                    <td className="px-4 py-3 text-sm">{lead.contact_name}</td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-1 text-xs rounded-xl bg-blue-100 text-blue-800">{lea
