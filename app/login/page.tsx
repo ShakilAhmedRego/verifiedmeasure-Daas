@@ -27,7 +27,9 @@ export default function LoginPage() {
         .eq('id', session.user.id)
         .single()
       
-      router.push(profile?.role === 'admin' ? '/admin' : '/dashboard')
+      if (profile) {
+        router.push(profile.role === 'admin' ? '/admin' : '/dashboard')
+      }
     }
   }
 
@@ -50,14 +52,18 @@ export default function LoginPage() {
         .eq('id', data.user.id)
         .single()
 
-      if (profile?.status === 'suspended') {
+      if (profile && profile.status === 'suspended') {
         await supabase.auth.signOut()
         setError('Account suspended. Please contact QA@verifiedmeasure.com')
         setLoading(false)
         return
       }
 
-      router.push(profile?.role === 'admin' ? '/admin' : '/dashboard')
+      if (profile) {
+        router.push(profile.role === 'admin' ? '/admin' : '/dashboard')
+      } else {
+        router.push('/dashboard')
+      }
     } catch (err: any) {
       setError(err.message || 'Invalid email or password')
       setLoading(false)
