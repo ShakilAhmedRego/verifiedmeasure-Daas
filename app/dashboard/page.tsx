@@ -1,382 +1,319 @@
 'use client'
-
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
+import { getSupabase } from '@/lib/supabase'
 import { exportToCSV } from '@/lib/csv'
-import { Shield, Download, Search, LogOut, Settings } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Shield, Download, Search, Filter, LogOut, Coins, Database, CheckCircle, History, X } from 'lucide-react'
 
-const formatDateTimeStamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+const supabase = getSupabase()
 
-export default function Dashboard() {
+interface Lead {
+  id: string
+  lead_id: string
+  company_name: string
+  contact_name: string
+  email: string
+  phone: string
+  industry: string
+  location: string
+  company_size: string
+  revenue_range: string
+  capital_need: string
+}
+
+interface UserProfile {
+  id: string
+  email: string
+  name: string
+  company: string
+  credits: number
+  role: string
+  status: string
+}
+
+interface DownloadRecord {
+  id: string
+  user_id: string
+  lead_id: string
+  downloaded_at: string
+}
+
+export default function DashboardPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
-  const [profile, setProfile] = useState<any>(null)
-  const [leads, setLeads] = useState<any[]>([])
-  const [filteredLeads, setFilteredLeads] = useState<any[]>([])
-  const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set())
-  const [downloadedLeads, setDownloadedLeads] = useState<Set<string>>(new Set())
-  
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [selectedLeads, setSelectedLeads] = useState<string[]>([])
+  const [downloadHistory, setDownloadHistory] = useState<DownloadRecord[]>([])
   const [searchTerm, setSearchTerm] = useState('')
-  const [industryFilter, setIndustryFilter] = useState('')
-  const [locationFilter, setLocationFilter] = useState('')
+  const [filterIndustry, setFilterIndustry] = useState('all')
+  const [filterLocation, setFilterLocation] = useState('all')
   const [loading, setLoading] = useState(true)
+  const [notification, setNotification] = useState<{message: string, type: string} | null>(null)
 
   useEffect(() => {
     checkUser()
-    fetchLeads()
-    fetchDownloadHistory()
   }, [])
 
-  useEffect(() => {
-    filterLeads()
-  }, [leads, searchTerm, industryFilter, locationFilter])
-
   const checkUser = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    
-    if (!session) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        router.push('/login')
+        return
+      }
+
+      const { data: profileData } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .single() as { data: UserProfile | null }
+
+      if (profileData && profileData.role === 'admin') {
+        router.push('/admin')
+        return
+      }
+
+      setUser(session.user)
+      setProfile(profileData)
+      await fetchLeads()
+      await fetchDownloadHistory(session.user.id)
+    } catch (error) {
+      console.error('Error:', error)
       router.push('/login')
-      return
+    } finally {
+      setLoading(false)
     }
-
-    setUser(session.user)
-    
-    const { data: profileData } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .single()
-
-    setProfile(profileData)
-    setLoading(false)
   }
 
   const fetchLeads = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('leads')
       .select('*')
       .eq('status', 'available')
       .order('created_date', { ascending: false })
-
-    if (data) {
-      setLeads(data)
-      setFilteredLeads(data)
-    }
+    
+    setLeads((data as Lead[]) || [])
   }
 
-  const fetchDownloadHistory = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-
+  const fetchDownloadHistory = async (userId: string) => {
     const { data } = await supabase
       .from('download_history')
-      .select('lead_id')
-      .eq('user_id', session.user.id)
-
-    if (data) {
-      setDownloadedLeads(new Set(data.map(d => d.lead_id)))
-    }
+      .select('*')
+      .eq('user_id', userId)
+      .order('downloaded_at', { ascending: false })
+    
+    setDownloadHistory((data as DownloadRecord[]) || [])
   }
 
-  const filterLeads = () => {
-    let filtered = leads
-
-    if (searchTerm) {
-      filtered = filtered.filter(lead =>
-        lead.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (lead.contact_name && lead.contact_name.toLowerCase().includes(searchTerm.toLowerCase()))
-      )
-    }
-
-    if (industryFilter) {
-      filtered = filtered.filter(lead => lead.industry === industryFilter)
-    }
-
-    if (locationFilter) {
-      filtered = filtered.filter(lead => lead.location === locationFilter)
-    }
-
-    setFilteredLeads(filtered)
+  const showNotification = (message: string, type: string) => {
+    setNotification({ message, type })
+    setTimeout(() => setNotification(null), 4000)
   }
 
-  const toggleSelectLead = (leadId: string) => {
-    const newSelected = new Set(selectedLeads)
-    if (newSelected.has(leadId)) {
-      newSelected.delete(leadId)
-    } else {
-      newSelected.add(leadId)
-    }
-    setSelectedLeads(newSelected)
+  const industries = ['all', ...new Set(leads.map(l => l.industry).filter(Boolean))]
+  const locations = ['all', ...new Set(leads.map(l => l.location).filter(Boolean))]
+
+  const filteredLeads = leads.filter(lead => {
+    const matchesSearch = 
+      lead.company_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      lead.contact_name?.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesIndustry = filterIndustry === 'all' || lead.industry === filterIndustry
+    const matchesLocation = filterLocation === 'all' || lead.location === filterLocation
+    
+    return matchesSearch && matchesIndustry && matchesLocation
+  })
+
+  const handleSelectLead = (leadId: string) => {
+    setSelectedLeads(prev => 
+      prev.includes(leadId) ? prev.filter(id => id !== leadId) : [...prev, leadId]
+    )
   }
 
-  const selectAll = () => {
-    if (selectedLeads.size === filteredLeads.length) {
-      setSelectedLeads(new Set())
-    } else {
-      setSelectedLeads(new Set(filteredLeads.map(l => l.lead_id)))
-    }
+  const handleSelectAll = () => {
+    setSelectedLeads(
+      selectedLeads.length === filteredLeads.length ? [] : filteredLeads.map(l => l.id)
+    )
   }
 
-  const calculateCost = () => {
-    let cost = 0
-    selectedLeads.forEach(leadId => {
-      if (!downloadedLeads.has(leadId)) {
-        cost += 1
-      }
-    })
-    return cost
-  }
-
-  const handleDownloadCSV = async () => {
-    if (selectedLeads.size === 0) {
-      alert('Please select at least one lead')
+  const handleDownload = async () => {
+    if (selectedLeads.length === 0) {
+      showNotification('Please select at least one lead', 'warning')
       return
     }
 
-    const cost = calculateCost()
-    
-    if (cost > (profile?.credits || 0)) {
-      alert(`Not enough credits! You need ${cost} credits but have ${profile?.credits || 0}`)
+    const alreadyDownloaded = selectedLeads.filter(leadId =>
+      downloadHistory.some((h: DownloadRecord) => h.lead_id === leadId)
+    )
+    const newDownloads = selectedLeads.filter(leadId => !alreadyDownloaded.includes(leadId))
+    const creditsNeeded = newDownloads.length
+
+    if (creditsNeeded > 0 && (profile?.credits || 0) < creditsNeeded) {
+      showNotification(`Insufficient credits. You need ${creditsNeeded} but have ${profile?.credits || 0}`, 'error')
       return
     }
 
     try {
-      const leadsToDownload = filteredLeads.filter(l => selectedLeads.has(l.lead_id))
-      const newDownloads: string[] = []
+      const leadsToDownload = leads.filter(l => selectedLeads.includes(l.id))
       
-      for (const lead of leadsToDownload) {
-        if (!downloadedLeads.has(lead.lead_id)) {
-          await supabase.from('download_history').insert({
-            user_id: user.id,
-            lead_id: lead.lead_id
-          })
-          newDownloads.push(lead.lead_id)
-        }
-      }
+      exportToCSV(
+        leadsToDownload.map(lead => ({
+          'Company Name': lead.company_name,
+          'Contact Name': lead.contact_name,
+          'Email': lead.email,
+          'Phone': lead.phone,
+          'Industry': lead.industry,
+          'Location': lead.location,
+          'Company Size': lead.company_size,
+          'Revenue Range': lead.revenue_range,
+          'Capital Need': lead.capital_need
+        })),
+        `verifiedmeasure_leads_${new Date().toISOString().split('T')[0]}.csv`
+      )
 
-      if (newDownloads.length > 0 && profile) {
+      if (newDownloads.length > 0) {
         await supabase
           .from('user_profiles')
-          .update({ credits: profile.credits - newDownloads.length })
+          .update({ credits: (profile?.credits || 0) - creditsNeeded })
           .eq('id', user.id)
 
-        setProfile({ ...profile, credits: profile.credits - newDownloads.length })
+        for (const leadId of newDownloads) {
+          await supabase.from('download_history').insert({ user_id: user.id, lead_id: leadId })
+        }
+
+        await supabase.from('credit_transactions').insert({
+          user_id: user.id,
+          amount: -creditsNeeded,
+          type: 'deduct',
+          description: `Downloaded ${creditsNeeded} leads`
+        })
       }
 
-      const updatedDownloaded = new Set(downloadedLeads)
-      newDownloads.forEach(id => updatedDownloaded.add(id))
-      setDownloadedLeads(updatedDownloaded)
-
-      const timestamp = formatDateTimeStamp()
-      exportToCSV(leadsToDownload, `verifiedmeasure-leads-${timestamp}.csv`)
-
-      alert(`Successfully downloaded ${leadsToDownload.length} leads! ${newDownloads.length} credits deducted.`)
-      setSelectedLeads(new Set())
+      await checkUser()
+      setSelectedLeads([])
+      
+      showNotification(
+        alreadyDownloaded.length > 0
+          ? `Downloaded ${selectedLeads.length} leads! (${alreadyDownloaded.length} were free re-downloads)`
+          : `Downloaded ${selectedLeads.length} leads successfully!`,
+        'success'
+      )
     } catch (error) {
       console.error('Download error:', error)
-      alert('Failed to download leads')
+      showNotification('Download failed. Please try again.', 'error')
     }
   }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
-    router.push('/')
+    router.push('/login')
   }
-
-  const uniqueIndustries = Array.from(new Set(leads.map(l => l.industry).filter(Boolean)))
-  const uniqueLocations = Array.from(new Set(leads.map(l => l.location).filter(Boolean)))
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-xl">Loading...</div>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading dashboard...</p>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      {notification && (
+        <div className="fixed top-4 right-4 z-50 animate-slide-in">
+          <div className={`px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 ${
+            notification.type === 'success' ? 'bg-green-500' :
+            notification.type === 'error' ? 'bg-red-500' : 'bg-yellow-500'
+          } text-white font-medium`}>
+            {notification.type === 'success' && <CheckCircle className="w-5 h-5" />}
+            {notification.message}
+            <button onClick={() => setNotification(null)}><X className="w-4 h-4" /></button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center">
-                <Shield className="w-6 h-6 text-white" />
+              <div className="w-10 h-10 rounded-2xl bg-blue-100 flex items-center justify-center">
+                <Shield className="w-6 h-6 text-blue-600" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">VerifiedMeasure</h1>
-                <p className="text-sm text-gray-600">{user?.email}</p>
+                <h1 className="text-2xl font-bold">VerifiedMeasure</h1>
+                <p className="text-sm text-gray-600">Welcome, {profile?.name}</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <p className="text-sm text-gray-600">Available Credits</p>
-                <p className="text-2xl font-bold text-blue-600">{profile?.credits || 0}</p>
+                <div className="flex items-center gap-2">
+                  <Coins className="w-5 h-5 text-yellow-500" />
+                  <p className="text-3xl font-bold text-blue-600">{profile?.credits || 0}</p>
+                </div>
               </div>
-              {profile?.role === 'admin' && (
-                <button
-                  onClick={() => router.push('/admin')}
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-2xl text-sm font-medium flex items-center gap-2"
-                >
-                  <Settings className="w-4 h-4" />
-                  Admin Panel
-                </button>
-              )}
-              <button
-                onClick={handleLogout}
-                className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-2xl text-sm font-medium flex items-center gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                Logout
+              <button onClick={handleLogout} className="px-4 py-2 text-gray-600 hover:text-gray-900 flex items-center gap-2">
+                <LogOut className="w-5 h-5" />
               </button>
             </div>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-3xl shadow-sm p-6 border">
-            <p className="text-gray-600 text-sm font-medium">Available Leads</p>
-            <p className="text-4xl font-bold text-gray-900 mt-1">{filteredLeads.length}</p>
-          </div>
-          <div className="bg-white rounded-3xl shadow-sm p-6 border">
-            <p className="text-gray-600 text-sm font-medium">Selected</p>
-            <p className="text-4xl font-bold text-blue-600 mt-1">{selectedLeads.size}</p>
-          </div>
-          <div className="bg-white rounded-3xl shadow-sm p-6 border">
-            <p className="text-gray-600 text-sm font-medium">Downloaded</p>
-            <p className="text-4xl font-bold text-green-600 mt-1">{downloadedLeads.size}</p>
-          </div>
-          <div className="bg-white rounded-3xl shadow-sm p-6 border">
-            <p className="text-gray-600 text-sm font-medium">Cost</p>
-            <p className="text-4xl font-bold text-purple-600 mt-1">{calculateCost()}</p>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="bg-white rounded-3xl shadow-sm p-6 mb-6 border">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Company or contact..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Available Leads</p>
+                <p className="text-3xl font-bold mt-1 text-blue-600">{filteredLeads.length}</p>
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center">
+                <Database className="w-6 h-6 text-blue-600" />
+              </div>
             </div>
-            <select
-              value={industryFilter}
-              onChange={(e) => setIndustryFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">All Industries</option>
-              {uniqueIndustries.map(industry => (
-                <option key={industry} value={industry}>{industry}</option>
-              ))}
-            </select>
-            <select
-              value={locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value)}
-              className="px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">All Locations</option>
-              {uniqueLocations.map(location => (
-                <option key={location} value={location}>{location}</option>
-              ))}
-            </select>
+          </div>
+
+          <div className="bg-white rounded-3xl shadow-sm p-6 border">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Selected</p>
+                <p className="text-3xl font-bold mt-1 text-green-600">{selectedLeads.length}</p>
+              </div>
+              <div className="w-12 h-12 bg-green-100 rounded-2xl flex items-center justify-center">
+                <CheckCircle className="w-6 h-6 text-green-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl shadow-sm p-6 border">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Downloaded</p>
+                <p className="text-3xl font-bold mt-1 text-purple-600">{downloadHistory.length}</p>
+              </div>
+              <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center">
+                <History className="w-6 h-6 text-purple-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl shadow-sm p-6 border">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-gray-600 text-sm font-medium">Cost</p>
+                <p className="text-3xl font-bold mt-1 text-orange-600">{selectedLeads.filter(id => !downloadHistory.some((h: DownloadRecord) => h.lead_id === id)).length}</p>
+              </div>
+              <div className="w-12 h-12 bg-orange-100 rounded-2xl flex items-center justify-center">
+                <Coins className="w-6 h-6 text-orange-600" />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="bg-white rounded-3xl shadow-sm p-4 mb-6 border flex justify-between items-center">
-          <div className="flex gap-3">
-            <button
-              onClick={selectAll}
-              className="px-4 py-2 border border-gray-300 rounded-2xl hover:bg-gray-50 text-sm font-medium"
-            >
-              {selectedLeads.size === filteredLeads.length ? 'Deselect All' : 'Select All'}
-            </button>
-            <p className="text-gray-600 py-2">
-              {selectedLeads.size} selected • {calculateCost()} credits needed
-            </p>
-          </div>
-          <button
-            onClick={handleDownloadCSV}
-            disabled={selectedLeads.size === 0}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-2xl font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            <Download className="w-5 h-5" />
-            Download CSV ({calculateCost()} credits)
-          </button>
-        </div>
-
-        {/* Leads Table */}
-        <div className="bg-white rounded-3xl shadow-sm overflow-hidden border">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Select</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Company</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Contact</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Industry</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Location</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Capital Need</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredLeads.map((lead) => (
-                  <tr key={lead.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedLeads.has(lead.lead_id)}
-                        onChange={() => toggleSelectLead(lead.lead_id)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      />
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">{lead.company_name}</div>
-                      <div className="text-sm text-gray-500">{lead.company_size || 'N/A'}</div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">{lead.contact_name || 'N/A'}</td>
-                    <td className="px-6 py-4">
-                      <span className="px-2 py-1 text-xs rounded-xl bg-blue-100 text-blue-800">{lead.industry || 'N/A'}</span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{lead.location || 'N/A'}</td>
-                    <td className="px-6 py-4 text-sm font-semibold text-green-600">{lead.capital_need || 'N/A'}</td>
-                    <td className="px-6 py-4">
-                      {downloadedLeads.has(lead.lead_id) ? (
-                        <span className="px-2 py-1 text-xs rounded-xl bg-green-100 text-green-800 font-semibold">
-                          Downloaded
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 text-xs rounded-xl bg-gray-100 text-gray-800 font-semibold">
-                          New
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {filteredLeads.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            No leads found matching your filters.
-          </div>
-        )}
-      </main>
-    </div>
-  )
-}
+        <div className="bg-white rounded-3xl shadow-sm p-6 border">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
